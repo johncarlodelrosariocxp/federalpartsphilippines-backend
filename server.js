@@ -93,7 +93,7 @@ const uploadCategoryImage = multer({
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:3000"],
+    origin: ["http://localhost:5173", "http://localhost:3000", "https://federalpartsphilippines.vercel.app" ],
     credentials: true,
   })
 );
@@ -346,6 +346,36 @@ const processProductForResponse = (product) => {
 // ============================================
 // 🛣️ MAIN ROUTES
 // ============================================
+
+// ROOT ROUTE - Server status
+app.get("/", (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? "connected" : "disconnected";
+  const uptime = process.uptime();
+  const uptimeFormatted = `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${Math.floor(uptime % 60)}s`;
+  
+  res.json({
+    success: true,
+    message: "🚀 Federal Parts Philippines Backend API",
+    status: "Server is running",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+    uptime: uptimeFormatted,
+    database: dbStatus,
+    endpoints: {
+      api: "/api",
+      products: "/api/products",
+      categories: "/api/categories",
+      health: "/health",
+      uploads: "/uploads",
+      admin: {
+        products: "/api/admin/products",
+        createProduct: "/api/admin/products (POST)",
+        updateProduct: "/api/admin/products/:id (PUT)"
+      }
+    },
+    documentation: "See /api for detailed endpoint information"
+  });
+});
 
 // 🔧 TEST ROUTE
 app.get("/api", (req, res) => {
