@@ -93,7 +93,12 @@ const uploadCategoryImage = multer({
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:3000", "https://federalpartsphilippines.vercel.app" ],
+    origin: [
+      "http://localhost:5173", 
+      "http://localhost:3000", 
+      "https://federalpartsphilippines.vercel.app", 
+      "https://federalpartsphilippines-frontend.vercel.app"
+     ],
     credentials: true,
   })
 );
@@ -109,7 +114,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // ============================================
 
 const MONGODB_URI =
-  process.env.MONGODB_URI || "mongodb://localhost:27017/federal-parts";
+  process.env.MONGODB_URI || "mongodb+srv://federal:admin1234@cluster0.glihep0.mongodb.net/?appName=Cluster0";
 
 const connectDB = async () => {
   try {
