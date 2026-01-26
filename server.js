@@ -34,7 +34,6 @@ const categoryStorage = multer.diskStorage({
     cb(null, categoryUploadsDir);
   },
   filename: function (req, file, cb) {
-    // Create unique filename with timestamp
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     const ext = path.extname(file.originalname).toLowerCase();
     const filename = "category-" + uniqueSuffix + ext;
@@ -74,7 +73,7 @@ const fileFilter = (req, file, cb) => {
 const uploadProductImages = multer({
   storage: productStorage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: 5 * 1024 * 1024,
   },
   fileFilter: fileFilter,
 });
@@ -82,7 +81,7 @@ const uploadProductImages = multer({
 const uploadCategoryImage = multer({
   storage: categoryStorage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: 5 * 1024 * 1024,
   },
   fileFilter: fileFilter,
 });
@@ -91,19 +90,48 @@ const uploadCategoryImage = multer({
 // 🛡️ MIDDLEWARE
 // ============================================
 
+// Fix JSON parsing errors - add this BEFORE express.json()
+app.use((req, res, next) => {
+  if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
+    let data = '';
+    req.on('data', chunk => {
+      data += chunk;
+    });
+    req.on('end', () => {
+      if (data.trim() === '') {
+        req.body = {};
+        next();
+      } else {
+        try {
+          req.body = JSON.parse(data);
+          next();
+        } catch (err) {
+          console.error('❌ JSON Parse Error:', err.message);
+          res.status(400).json({
+            success: false,
+            message: "Invalid JSON in request body"
+          });
+        }
+      }
+    });
+  } else {
+    next();
+  }
+});
+
 app.use(
   cors({
     origin: [
-      "http://localhost:5173", 
-      "http://localhost:3000", 
-      "https://federalpartsphilippines.vercel.app", 
-      "https://federalpartsphilippines-frontend.vercel.app"
-     ],
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "https://federalpartsphilippines.vercel.app",
+      "https://federalpartsphilippines-frontend.vercel.app",
+    ],
     credentials: true,
   })
 );
 
-app.use(express.json({ limit: "50mb" })); // Increased limit for base64 images
+app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Serve static files from uploads directory
@@ -114,7 +142,8 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // ============================================
 
 const MONGODB_URI =
-  process.env.MONGODB_URI || "mongodb+srv://federal:admin1234@cluster0.glihep0.mongodb.net/?appName=Cluster0";
+  process.env.MONGODB_URI ||
+  "mongodb+srv://federal:admin1234@cluster0.glihep0.mongodb.net/?appName=Cluster0";
 
 const connectDB = async () => {
   try {
@@ -136,35 +165,27 @@ connectDB();
 // 🖼️ IMAGE UPLOAD UTILITY FUNCTIONS
 // ============================================
 
-/**
- * Deletes image file from server
- * @param {string} imagePath - Path to the image file
- */
 const deleteImageFile = (imagePath) => {
   if (!imagePath) return;
 
   let fullPath;
 
-  // Handle different path formats
   if (imagePath.startsWith("uploads/")) {
     fullPath = path.join(__dirname, imagePath);
   } else if (imagePath.startsWith("/uploads/")) {
     fullPath = path.join(__dirname, imagePath.substring(1));
   } else if (imagePath.includes("categories/")) {
-    // Extract just the filename and reconstruct path
     const filename = imagePath.split("/").pop();
     fullPath = path.join(categoryUploadsDir, filename);
   } else if (imagePath.includes("products/")) {
     const filename = imagePath.split("/").pop();
     fullPath = path.join(productUploadsDir, filename);
   } else {
-    // Assume it's a filename, try to find in appropriate directory
     if (imagePath.startsWith("category-")) {
       fullPath = path.join(categoryUploadsDir, imagePath);
     } else if (imagePath.startsWith("product-")) {
       fullPath = path.join(productUploadsDir, imagePath);
     } else {
-      // Try to find in uploads directory
       fullPath = path.join(__dirname, "uploads", imagePath);
     }
   }
@@ -180,28 +201,19 @@ const deleteImageFile = (imagePath) => {
   }
 };
 
-/**
- * Gets the public URL for an uploaded image
- * @param {string} filename - The filename stored in database
- * @param {string} type - 'category' or 'product'
- * @returns {string} Public URL
- */
 const getImageUrl = (filename, type = "product") => {
   if (!filename || filename.trim() === "") {
-    return ""; // Return empty string for no image
+    return "";
   }
 
-  // If it's already a full URL or data URL, return as is
   if (filename.startsWith("http") || filename.startsWith("data:")) {
     return filename;
   }
 
-  // If it already has /uploads/ prefix, return as is
   if (filename.startsWith("/uploads/")) {
     return filename;
   }
 
-  // If it's just a filename, construct URL based on type
   if (type === "category") {
     return `/uploads/categories/${filename}`;
   } else {
@@ -209,37 +221,23 @@ const getImageUrl = (filename, type = "product") => {
   }
 };
 
-/**
- * Extracts filename from a URL or path
- * @param {string} imagePath - Full URL or path
- * @returns {string} Just the filename
- */
 const extractFilename = (imagePath) => {
   if (!imagePath || imagePath.trim() === "") return "";
 
-  // If it's a URL, extract just the filename
   if (imagePath.includes("/")) {
     const filename = imagePath.split("/").pop();
     return filename || "";
   }
 
-  // If it's already just a filename, return as is
   return imagePath;
 };
 
-/**
- * Saves base64 image to file and returns filename
- * @param {string} base64Data - Base64 image data
- * @param {string} type - 'product' or 'category'
- * @returns {string} Filename
- */
 const saveBase64Image = (base64Data, type = "product") => {
   if (!base64Data || !base64Data.startsWith("data:image/")) {
     return "";
   }
 
   try {
-    // Extract mime type and base64 data
     const matches = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
     if (!matches || matches.length !== 3) {
       return "";
@@ -249,17 +247,14 @@ const saveBase64Image = (base64Data, type = "product") => {
     const base64String = matches[2];
     const buffer = Buffer.from(base64String, "base64");
 
-    // Determine directory and extension
     const dir = type === "category" ? categoryUploadsDir : productUploadsDir;
     const prefix = type === "category" ? "category-" : "product-";
     const ext = mimeType === "jpeg" ? "jpg" : mimeType;
 
-    // Generate unique filename
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     const filename = `${prefix}${uniqueSuffix}.${ext}`;
     const filepath = path.join(dir, filename);
 
-    // Save file
     fs.writeFileSync(filepath, buffer);
 
     console.log(`✅ Saved base64 image as: ${filename}`);
@@ -270,12 +265,6 @@ const saveBase64Image = (base64Data, type = "product") => {
   }
 };
 
-/**
- * Processes images array - converts base64 to files, extracts filenames
- * @param {Array} images - Array of images (base64 or filenames)
- * @param {string} type - 'product' or 'category'
- * @returns {Array} Array of filenames
- */
 const processImagesArray = (images, type = "product") => {
   if (!images || !Array.isArray(images)) {
     return [];
@@ -287,19 +276,16 @@ const processImagesArray = (images, type = "product") => {
     if (!image || typeof image !== "string" || image.trim() === "") continue;
 
     if (image.startsWith("data:image/")) {
-      // It's a base64 image - save it
       const filename = saveBase64Image(image, type);
       if (filename) {
         filenames.push(filename);
       }
     } else if (image.includes("/")) {
-      // It's a URL - extract filename
       const filename = extractFilename(image);
       if (filename) {
         filenames.push(filename);
       }
     } else {
-      // It's already a filename
       filenames.push(image);
     }
   }
@@ -307,24 +293,16 @@ const processImagesArray = (images, type = "product") => {
   return [...new Set(filenames.filter((f) => f && f.trim() !== ""))];
 };
 
-/**
- * Processes product data for response - ensures image URLs are correct
- * @param {Object} product - Product object from database
- * @returns {Object} Processed product with correct image URLs
- */
 const processProductForResponse = (product) => {
   const productObj = product.toObject ? product.toObject() : product;
 
-  // Ensure images is always an array
   if (!Array.isArray(productObj.images)) {
     productObj.images = [];
   }
 
-  // Process images array to ensure full URLs
   productObj.images = productObj.images
     .filter((image) => image && image.trim() !== "")
     .map((image) => {
-      // If image is already a full URL, keep it
       if (
         image.startsWith("http") ||
         image.startsWith("data:") ||
@@ -333,31 +311,108 @@ const processProductForResponse = (product) => {
         return image;
       }
 
-      // Check if image exists in uploads directory
       const imagePath = path.join(productUploadsDir, image);
       if (fs.existsSync(imagePath)) {
         return `/uploads/products/${image}`;
       }
 
-      // Image doesn't exist on server, return empty
       console.warn(`⚠️ Image not found on server: ${image}`);
       return "";
     })
-    .filter((image) => image !== ""); // Remove empty strings
+    .filter((image) => image !== "");
 
   return productObj;
+};
+
+// ============================================
+// 🔗 CATEGORY-PRODUCT COUNT UTILITY FUNCTIONS (UPDATED FOR MULTIPLE CATEGORIES)
+// ============================================
+
+const updateCategoryProductCount = async (categoryId) => {
+  try {
+    if (!categoryId || !mongoose.Types.ObjectId.isValid(categoryId)) return;
+
+    // UPDATED: Now checking if product.categories array includes the categoryId
+    const productCount = await Product.countDocuments({
+      categories: categoryId,
+      isActive: true,
+    });
+
+    await Category.findByIdAndUpdate(categoryId, {
+      productCount: productCount,
+      updatedAt: Date.now(),
+    });
+
+    console.log(
+      `✅ Updated product count for category ${categoryId}: ${productCount} products`
+    );
+
+    // Also update parent categories if any
+    const category = await Category.findById(categoryId);
+    if (category && category.parentCategory) {
+      await updateCategoryProductCount(category.parentCategory);
+    }
+  } catch (error) {
+    console.error("❌ Error updating category product count:", error.message);
+  }
+};
+
+const updateAllCategoryProductCounts = async () => {
+  try {
+    console.log("🔄 Updating product counts for all categories...");
+
+    const categories = await Category.find({});
+    let updatedCount = 0;
+
+    for (const category of categories) {
+      // UPDATED: Check products.categories array instead of product.category
+      const productCount = await Product.countDocuments({
+        categories: category._id,
+        isActive: true,
+      });
+
+      if (category.productCount !== productCount) {
+        await Category.findByIdAndUpdate(category._id, {
+          productCount: productCount,
+          updatedAt: Date.now(),
+        });
+        updatedCount++;
+        console.log(
+          `   📊 ${category.name}: ${productCount} products ${
+            productCount !== category.productCount ? "(updated)" : ""
+          }`
+        );
+      }
+    }
+
+    console.log(
+      `✅ Updated product counts for ${updatedCount}/${categories.length} categories`
+    );
+
+    return {
+      success: true,
+      message: `Updated ${updatedCount} categories`,
+      totalCategories: categories.length,
+      updated: updatedCount,
+    };
+  } catch (error) {
+    console.error("❌ Error updating all category product counts:", error);
+    return {
+      success: false,
+      message: error.message,
+    };
+  }
 };
 
 // ============================================
 // 🛣️ MAIN ROUTES
 // ============================================
 
-// ROOT ROUTE - Server status
 app.get("/", (req, res) => {
   const dbStatus = mongoose.connection.readyState === 1 ? "connected" : "disconnected";
   const uptime = process.uptime();
   const uptimeFormatted = `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${Math.floor(uptime % 60)}s`;
-  
+
   res.json({
     success: true,
     message: "🚀 Federal Parts Philippines Backend API",
@@ -372,17 +427,10 @@ app.get("/", (req, res) => {
       categories: "/api/categories",
       health: "/health",
       uploads: "/uploads",
-      admin: {
-        products: "/api/admin/products",
-        createProduct: "/api/admin/products (POST)",
-        updateProduct: "/api/admin/products/:id (PUT)"
-      }
     },
-    documentation: "See /api for detailed endpoint information"
   });
 });
 
-// 🔧 TEST ROUTE
 app.get("/api", (req, res) => {
   const dbStatus =
     mongoose.connection.readyState === 1 ? "connected" : "disconnected";
@@ -398,6 +446,7 @@ app.get("/api", (req, res) => {
       adminProducts: "/api/admin/products",
       categories: "/api/categories",
       createCategory: "/api/categories",
+      updateCategoryCounts: "/api/admin/categories/update-counts",
       health: "/health",
     },
   });
@@ -406,6 +455,35 @@ app.get("/api", (req, res) => {
 // ============================================
 // 🖼️ IMAGE UPLOAD ROUTES
 // ============================================
+
+// GET endpoint to check if images are accessible
+app.get("/api/check-image/:filename", (req, res) => {
+  const { filename } = req.params;
+  const productPath = path.join(productUploadsDir, filename);
+  const categoryPath = path.join(categoryUploadsDir, filename);
+  
+  if (fs.existsSync(productPath)) {
+    res.json({
+      success: true,
+      message: "Image exists in products directory",
+      url: `/uploads/products/${filename}`,
+      accessible: true
+    });
+  } else if (fs.existsSync(categoryPath)) {
+    res.json({
+      success: true,
+      message: "Image exists in categories directory",
+      url: `/uploads/categories/${filename}`,
+      accessible: true
+    });
+  } else {
+    res.status(404).json({
+      success: false,
+      message: "Image not found",
+      accessible: false
+    });
+  }
+});
 
 // POST /api/upload - Upload single image (for products)
 app.post(
@@ -420,7 +498,6 @@ app.post(
         });
       }
 
-      // Construct image URL
       const imageUrl = `/uploads/products/${req.file.filename}`;
 
       res.json({
@@ -428,7 +505,7 @@ app.post(
         message: "Image uploaded successfully",
         image: {
           url: imageUrl,
-          filename: req.file.filename, // Return filename for database storage
+          filename: req.file.filename,
           path: req.file.path,
           size: req.file.size,
           mimetype: req.file.mimetype,
@@ -458,7 +535,6 @@ app.post(
         });
       }
 
-      // Construct image URL
       const imageUrl = `/uploads/categories/${req.file.filename}`;
 
       res.json({
@@ -466,7 +542,7 @@ app.post(
         message: "Category image uploaded successfully",
         image: {
           url: imageUrl,
-          filename: req.file.filename, // Return filename for database storage
+          filename: req.file.filename,
           path: req.file.path,
           size: req.file.size,
           mimetype: req.file.mimetype,
@@ -486,9 +562,16 @@ app.post(
 // POST /api/upload/base64 - Upload base64 image
 app.post("/api/upload/base64", async (req, res) => {
   try {
+    if (!req.body || !req.body.image) {
+      return res.status(400).json({
+        success: false,
+        message: "No image data provided",
+      });
+    }
+
     const { image, type = "product" } = req.body;
 
-    if (!image || !image.startsWith("data:image/")) {
+    if (!image.startsWith("data:image/")) {
       return res.status(400).json({
         success: false,
         message: "Invalid base64 image data",
@@ -527,29 +610,25 @@ app.post("/api/upload/base64", async (req, res) => {
 });
 
 // ============================================
-// 📁 CATEGORY ROUTES WITH IMAGE UPLOAD SUPPORT
+// 📁 CATEGORY ROUTES
 // ============================================
 
-// GET /api/categories - Get all categories (with image URL processing)
 app.get("/api/categories", async (req, res) => {
   try {
     const { includeInactive, search, parent, includeTree } = req.query;
 
     let filter = {};
 
-    // Filter by active status
     if (!includeInactive || includeInactive === "false") {
       filter.isActive = true;
     }
 
-    // Filter by parent category
     if (parent === "null" || parent === "none") {
       filter.parentCategory = null;
     } else if (parent) {
       filter.parentCategory = parent;
     }
 
-    // Search by name
     if (search) {
       filter.$or = [
         { name: { $regex: search, $options: "i" } },
@@ -560,7 +639,6 @@ app.get("/api/categories", async (req, res) => {
     let categories;
 
     if (includeTree === "true") {
-      // Get hierarchical structure
       categories = await Category.find(filter)
         .populate({
           path: "children",
@@ -569,24 +647,45 @@ app.get("/api/categories", async (req, res) => {
         })
         .sort({ order: 1, name: 1 });
 
-      // Filter to get only parent categories for tree view
       categories = categories.filter((cat) => !cat.parentCategory);
     } else {
-      // Get flat list
       categories = await Category.find(filter).sort({ order: 1, name: 1 });
     }
 
-    // Process images to ensure full URLs
-    const processedCategories = categories.map((category) => {
-      const categoryObj = category.toObject();
+    const processedCategories = await Promise.all(
+      categories.map(async (category) => {
+        const categoryObj = category.toObject();
 
-      // Ensure image has full URL
-      if (categoryObj.image) {
-        categoryObj.image = getImageUrl(categoryObj.image, "category");
-      }
+        if (categoryObj.image) {
+          categoryObj.image = getImageUrl(categoryObj.image, "category");
+        }
 
-      return categoryObj;
-    });
+        if (categoryObj.productCount === undefined || categoryObj.productCount === null) {
+          // UPDATED: Check products.categories array instead of product.category
+          const productCount = await Product.countDocuments({
+            categories: categoryObj._id,
+            isActive: true,
+          });
+          categoryObj.productCount = productCount;
+        }
+
+        if (includeTree === "true" && categoryObj.children && categoryObj.children.length > 0) {
+          let totalProductCount = categoryObj.productCount || 0;
+          for (const child of categoryObj.children) {
+            // UPDATED: Check products.categories array instead of product.category
+            const childProductCount = await Product.countDocuments({
+              categories: child._id,
+              isActive: true,
+            });
+            child.productCount = childProductCount;
+            totalProductCount += childProductCount;
+          }
+          categoryObj.totalProductCount = totalProductCount;
+        }
+
+        return categoryObj;
+      })
+    );
 
     res.json({
       success: true,
@@ -603,7 +702,6 @@ app.get("/api/categories", async (req, res) => {
   }
 });
 
-// GET /api/categories/:id - Get single category
 app.get("/api/categories/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -626,15 +724,44 @@ app.get("/api/categories/:id", async (req, res) => {
       });
     }
 
-    // Process image URL
     const categoryObj = category.toObject();
     if (categoryObj.image) {
       categoryObj.image = getImageUrl(categoryObj.image, "category");
     }
 
+    // UPDATED: Check products.categories array instead of product.category
+    const productCount = await Product.countDocuments({
+      categories: id,
+      isActive: true,
+    });
+    categoryObj.productCount = productCount;
+
+    const recentProducts = await Product.find({
+      categories: id,
+      isActive: true,
+    })
+      .limit(5)
+      .sort({ createdAt: -1 })
+      .select("name price images featured categories");
+
+    const processedRecentProducts = recentProducts.map((product) => {
+      const productObj = product.toObject();
+      if (productObj.images && productObj.images.length > 0) {
+        const firstImage = productObj.images[0];
+        if (firstImage && !firstImage.startsWith("http") && !firstImage.startsWith("/uploads/")) {
+          productObj.imageUrl = getImageUrl(firstImage, "product");
+        } else {
+          productObj.imageUrl = firstImage;
+        }
+      }
+      return productObj;
+    });
+
     res.json({
       success: true,
       category: categoryObj,
+      productCount: productCount,
+      recentProducts: processedRecentProducts,
     });
   } catch (error) {
     console.error("❌ Category error:", error);
@@ -646,15 +773,11 @@ app.get("/api/categories/:id", async (req, res) => {
   }
 });
 
-// POST /api/categories - Create new category WITH FILE UPLOAD
 app.post(
   "/api/categories",
   uploadCategoryImage.single("image"),
   async (req, res) => {
     try {
-      console.log("📥 Creating category with data:", req.body);
-      console.log("📁 Uploaded file:", req.file);
-
       const {
         name,
         description,
@@ -666,7 +789,6 @@ app.post(
         seoKeywords,
       } = req.body;
 
-      // Validate required fields
       if (!name || !name.trim()) {
         return res.status(400).json({
           success: false,
@@ -674,7 +796,6 @@ app.post(
         });
       }
 
-      // Check if category already exists
       const existingCategory = await Category.findOne({ name: name.trim() });
       if (existingCategory) {
         return res.status(400).json({
@@ -683,10 +804,9 @@ app.post(
         });
       }
 
-      // Handle uploaded image - store only the filename in database
       let imageFilename = "";
       if (req.file) {
-        imageFilename = req.file.filename; // Store only filename
+        imageFilename = req.file.filename;
       }
 
       const category = new Category({
@@ -698,12 +818,12 @@ app.post(
         seoTitle: seoTitle ? seoTitle.trim() : "",
         seoDescription: seoDescription ? seoDescription.trim() : "",
         seoKeywords: seoKeywords ? seoKeywords.trim() : "",
-        image: imageFilename, // Store ONLY filename in database
+        image: imageFilename,
+        productCount: 0,
       });
 
       await category.save();
 
-      // Return category with full image URL in response
       const categoryObj = category.toObject();
       if (imageFilename) {
         categoryObj.image = getImageUrl(imageFilename, "category");
@@ -725,7 +845,6 @@ app.post(
   }
 );
 
-// PUT /api/categories/:id - Update category WITH IMAGE HANDLING
 app.put(
   "/api/categories/:id",
   uploadCategoryImage.single("image"),
@@ -759,7 +878,6 @@ app.put(
         seoKeywords,
       } = req.body;
 
-      // Update fields if provided
       if (name !== undefined) {
         if (!name.trim()) {
           return res.status(400).json({
@@ -768,7 +886,6 @@ app.put(
           });
         }
 
-        // Check if new name conflicts with other categories
         const existingCategory = await Category.findOne({
           name: name.trim(),
           _id: { $ne: id },
@@ -795,22 +912,17 @@ app.put(
       if (seoKeywords !== undefined)
         category.seoKeywords = seoKeywords ? seoKeywords.trim() : "";
 
-      // Handle image update
       if (req.file) {
-        // Delete old image if exists
         if (category.image) {
           deleteImageFile(category.image);
         }
-        // Set new image - store only filename
         category.image = req.file.filename;
       } else if (req.body.removeImage === "true") {
-        // Handle image removal request
         if (category.image) {
           deleteImageFile(category.image);
           category.image = "";
         }
       } else if (req.body.image && req.body.image.startsWith("data:image/")) {
-        // Handle base64 image
         if (category.image) {
           deleteImageFile(category.image);
         }
@@ -822,11 +934,12 @@ app.put(
 
       await category.save();
 
-      // Process image URL for response
       const categoryObj = category.toObject();
       if (categoryObj.image) {
         categoryObj.image = getImageUrl(categoryObj.image, "category");
       }
+
+      await updateCategoryProductCount(id);
 
       res.json({
         success: true,
@@ -844,7 +957,6 @@ app.put(
   }
 );
 
-// DELETE /api/categories/:id - Delete category WITH IMAGE CLEANUP
 app.delete("/api/categories/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -853,7 +965,7 @@ app.delete("/api/categories/:id", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Invalid category ID format",
-      });
+        });
     }
 
     const category = await Category.findById(id);
@@ -864,7 +976,6 @@ app.delete("/api/categories/:id", async (req, res) => {
       });
     }
 
-    // Check if category has children
     const childCount = await Category.countDocuments({ parentCategory: id });
     if (childCount > 0) {
       return res.status(400).json({
@@ -874,12 +985,29 @@ app.delete("/api/categories/:id", async (req, res) => {
       });
     }
 
-    // Delete associated image file
+    // UPDATED: Check products.categories array instead of product.category
+    const productCount = await Product.countDocuments({
+      categories: id,
+      isActive: true,
+    });
+    if (productCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Cannot delete category with products. Please reassign or delete products first.",
+        productCount: productCount,
+      });
+    }
+
     if (category.image) {
       deleteImageFile(category.image);
     }
 
     await category.deleteOne();
+
+    if (category.parentCategory) {
+      await updateCategoryProductCount(category.parentCategory);
+    }
 
     res.json({
       success: true,
@@ -895,11 +1023,39 @@ app.delete("/api/categories/:id", async (req, res) => {
   }
 });
 
+app.post("/api/admin/categories/update-counts", async (req, res) => {
+  try {
+    console.log("🔄 Manual request to update category product counts...");
+    const result = await updateAllCategoryProductCounts();
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message,
+        totalCategories: result.totalCategories,
+        updated: result.updated,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: result.message,
+      });
+    }
+  } catch (error) {
+    console.error("❌ Error in update-counts endpoint:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error updating category product counts",
+      error: error.message,
+    });
+  }
+});
+
 // ============================================
-// 📦 PRODUCT ROUTES
+// 📦 PRODUCT ROUTES (UPDATED FOR MULTIPLE CATEGORIES)
 // ============================================
 
-// GET /api/products - Fetch all products from MongoDB
 app.get("/api/products", async (req, res) => {
   try {
     const {
@@ -919,11 +1075,11 @@ app.get("/api/products", async (req, res) => {
     const sort = {};
     sort[sortBy] = sortOrder === "desc" ? -1 : 1;
 
-    // Build filter for MongoDB query
     const filter = { isActive: true };
 
     if (category && category !== "all" && category !== "null") {
-      filter.category = category;
+      // UPDATED: Now checking if product.categories array includes the category ID
+      filter.categories = category;
     }
 
     if (search) {
@@ -950,13 +1106,12 @@ app.get("/api/products", async (req, res) => {
       filter.stock = 0;
     }
 
-    // Fetch from MongoDB
     const products = await Product.find(filter)
       .skip(skip)
       .limit(Number(limit))
-      .sort(sort);
+      .sort(sort)
+      .populate("categories", "name slug productCount");
 
-    // Process image URLs for each product
     const processedProducts = products.map((product) =>
       processProductForResponse(product)
     );
@@ -992,12 +1147,10 @@ app.get("/api/products", async (req, res) => {
   }
 });
 
-// GET /api/products/:id - Fetch single product from MongoDB
 app.get("/api/products/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Validate if it's a valid MongoDB ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
@@ -1008,7 +1161,7 @@ app.get("/api/products/:id", async (req, res) => {
     const product = await Product.findOne({
       _id: id,
       isActive: true,
-    });
+    }).populate("categories", "name slug image productCount description");
 
     if (!product) {
       return res.status(404).json({
@@ -1017,8 +1170,16 @@ app.get("/api/products/:id", async (req, res) => {
       });
     }
 
-    // Process product for response
     const processedProduct = processProductForResponse(product);
+
+    if (processedProduct.categories && Array.isArray(processedProduct.categories)) {
+      processedProduct.categories = processedProduct.categories.map(cat => {
+        if (cat && cat.image) {
+          cat.image = getImageUrl(cat.image, "category");
+        }
+        return cat;
+      });
+    }
 
     res.json({
       success: true,
@@ -1035,16 +1196,14 @@ app.get("/api/products/:id", async (req, res) => {
 });
 
 // ============================================
-// 🔧 ADMIN ROUTES
+// 🔧 ADMIN ROUTES (UPDATED FOR MULTIPLE CATEGORIES)
 // ============================================
 
-// GET /api/admin/products - Get all products for admin
 app.get("/api/admin/products", async (req, res) => {
   try {
     const { page = 1, limit = 100, search = "", category = "" } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
 
-    // Build filter
     const filter = {};
 
     if (search) {
@@ -1057,15 +1216,16 @@ app.get("/api/admin/products", async (req, res) => {
     }
 
     if (category && category !== "all" && category !== "null") {
-      filter.category = category;
+      // UPDATED: Now checking if product.categories array includes the category ID
+      filter.categories = category;
     }
 
     const products = await Product.find(filter)
       .skip(skip)
       .limit(Number(limit))
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .populate("categories", "name productCount");
 
-    // Process image URLs for admin view
     const processedProducts = products.map((product) =>
       processProductForResponse(product)
     );
@@ -1091,7 +1251,6 @@ app.get("/api/admin/products", async (req, res) => {
   }
 });
 
-// POST /api/admin/products - Create new product in MongoDB WITH IMAGE UPLOAD
 app.post(
   "/api/admin/products",
   uploadProductImages.array("images", 10),
@@ -1105,6 +1264,7 @@ app.post(
         description,
         price,
         category,
+        categories = "[]", // NEW: Accept multiple categories
         stock = 0,
         brand,
         sku,
@@ -1114,9 +1274,9 @@ app.post(
         specifications = {},
         featured = false,
         isActive = true,
+        images: imagesInput = "[]",
       } = req.body;
 
-      // Validate required fields
       if (!name || !description || !price) {
         return res.status(400).json({
           success: false,
@@ -1124,7 +1284,6 @@ app.post(
         });
       }
 
-      // Validate price
       const priceNum = parseFloat(price);
       if (isNaN(priceNum) || priceNum <= 0) {
         return res.status(400).json({
@@ -1133,42 +1292,37 @@ app.post(
         });
       }
 
-      // Process images
       let imageFilenames = [];
 
-      // 1. Handle uploaded files from multer
+      // Handle uploaded files
       if (req.files && req.files.length > 0) {
         imageFilenames = req.files.map((file) => file.filename);
         console.log("📸 Added uploaded files:", imageFilenames);
       }
 
-      // 2. Handle images from request body (could be base64 or filenames)
-      if (req.body.images) {
-        try {
-          let bodyImages = req.body.images;
-
-          // Parse if it's a JSON string
-          if (typeof bodyImages === "string") {
-            try {
-              bodyImages = JSON.parse(bodyImages);
-            } catch (e) {
-              // If not JSON, treat as single image string
-              bodyImages = [bodyImages];
+      // Handle images from request body
+      let bodyImages = [];
+      try {
+        if (imagesInput && imagesInput !== "[]") {
+          if (typeof imagesInput === "string") {
+            if (imagesInput.trim().startsWith("[")) {
+              bodyImages = JSON.parse(imagesInput);
+            } else {
+              bodyImages = [imagesInput];
             }
+          } else if (Array.isArray(imagesInput)) {
+            bodyImages = imagesInput;
           }
-
-          // Ensure it's an array
-          if (Array.isArray(bodyImages)) {
-            const processed = processImagesArray(bodyImages, "product");
-            imageFilenames = [...imageFilenames, ...processed];
-            console.log("📸 Processed images from body:", processed);
-          } else if (bodyImages && typeof bodyImages === "string") {
-            const processed = processImagesArray([bodyImages], "product");
-            imageFilenames = [...imageFilenames, ...processed];
-          }
-        } catch (e) {
-          console.log("📸 Error processing images from body:", e.message);
         }
+      } catch (e) {
+        console.log("📸 Error parsing images from body:", e.message);
+        bodyImages = [];
+      }
+
+      if (Array.isArray(bodyImages) && bodyImages.length > 0) {
+        const processed = processImagesArray(bodyImages, "product");
+        imageFilenames = [...imageFilenames, ...processed];
+        console.log("📸 Processed images from body:", processed);
       }
 
       // Remove duplicates
@@ -1177,17 +1331,53 @@ app.post(
       ];
       console.log("📸 Final images array to save:", imageFilenames);
 
-      // Generate SKU if not provided
       const productSku =
         sku && sku.trim() !== ""
           ? sku.trim()
-          : `SKU-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+          : `SKU-${Date.now()}-${Math.random()
+              .toString(36)
+              .substr(2, 6)
+              .toUpperCase()}`;
+
+      // Process categories - accept both single category and multiple categories
+      let productCategories = [];
+      
+      // Parse categories array
+      try {
+        if (categories && categories !== "[]") {
+          if (typeof categories === "string") {
+            if (categories.trim().startsWith("[")) {
+              productCategories = JSON.parse(categories);
+            } else {
+              productCategories = [categories];
+            }
+          } else if (Array.isArray(categories)) {
+            productCategories = categories;
+          }
+        }
+      } catch (e) {
+        console.log("📊 Error parsing categories:", e.message);
+        productCategories = [];
+      }
+
+      // Also add single category if provided for backward compatibility
+      if (category && category !== "null" && category.trim() !== "") {
+        if (!productCategories.includes(category)) {
+          productCategories.push(category);
+        }
+      }
+
+      // Remove duplicates and empty values
+      productCategories = [
+        ...new Set(productCategories.filter((cat) => cat && cat.trim() !== "")),
+      ];
 
       const product = new Product({
         name: name.trim(),
         description: description.trim(),
         price: priceNum,
-        category: category && category !== "null" ? category : null,
+        categories: productCategories,
+        category: productCategories.length > 0 ? productCategories[0] : null, // For backward compatibility
         images: imageFilenames,
         stock: parseInt(stock) || 0,
         brand: brand ? brand.trim() : "",
@@ -1206,8 +1396,15 @@ app.post(
       await product.save();
 
       console.log("✅ Product saved to database:", product._id);
+      console.log("📊 Product categories:", productCategories);
 
-      // Process product for response
+      // Update product counts for all categories
+      if (productCategories.length > 0) {
+        for (const catId of productCategories) {
+          await updateCategoryProductCount(catId);
+        }
+      }
+
       const processedProduct = processProductForResponse(product);
 
       res.status(201).json({
@@ -1252,13 +1449,14 @@ app.put(
 
       console.log("📥 Updating product:", id);
       console.log("📁 Uploaded files:", req.files?.length || 0);
-      console.log("📝 Request body received");
+      console.log("📝 Request body:", req.body);
 
       const {
         name,
         description,
         price,
         category,
+        categories,
         stock,
         brand,
         sku,
@@ -1268,9 +1466,12 @@ app.put(
         specifications,
         featured,
         isActive,
-        images = "[]", // JSON string of images
-        removeImages = "[]", // JSON string of images to remove
+        images = "[]",
+        removeImages = "[]",
       } = req.body;
+
+      // Store old categories for product count update
+      const oldCategories = [...(product.categories || [])];
 
       // Update fields if provided
       if (name !== undefined && name.trim() !== "") product.name = name.trim();
@@ -1281,9 +1482,57 @@ app.put(
           product.price = priceNum;
         }
       }
-      if (category !== undefined) {
-        product.category = category && category !== "null" ? category : null;
+      
+      if (categories !== undefined) {
+        // Parse categories array
+        let newCategories = [];
+        try {
+          if (categories && categories !== "[]") {
+            if (typeof categories === "string") {
+              if (categories.trim().startsWith("[")) {
+                newCategories = JSON.parse(categories);
+              } else {
+                newCategories = [categories];
+              }
+            } else if (Array.isArray(categories)) {
+              newCategories = categories;
+            }
+          }
+        } catch (e) {
+          console.error("📊 Error parsing categories:", e);
+          newCategories = [];
+        }
+        
+        // Also add single category if provided for backward compatibility
+        if (category && category !== "null" && category.trim() !== "") {
+          if (!newCategories.includes(category)) {
+            newCategories.push(category);
+          }
+        }
+        
+        // Remove duplicates and empty values
+        product.categories = [
+          ...new Set(newCategories.filter((cat) => cat && cat.trim() !== "")),
+        ];
+        
+        // Update single category for backward compatibility
+        if (product.categories.length > 0) {
+          product.category = product.categories[0];
+        } else {
+          product.category = null;
+        }
+      } else if (category !== undefined) {
+        // For backward compatibility - single category update
+        if (category && category !== "null" && category.trim() !== "") {
+          if (!product.categories.includes(category)) {
+            product.categories.push(category);
+          }
+          product.category = category;
+        } else {
+          product.category = null;
+        }
       }
+
       if (stock !== undefined) product.stock = parseInt(stock) || 0;
       if (brand !== undefined) product.brand = brand ? brand.trim() : "";
       if (sku !== undefined && sku.trim() !== "") product.sku = sku.trim();
@@ -1301,7 +1550,7 @@ app.put(
       if (specifications !== undefined) {
         try {
           const specs =
-            typeof specifications === "string"
+            typeof specifications === "string" && specifications.trim() !== ""
               ? JSON.parse(specifications)
               : specifications;
           product.specifications = specs || {};
@@ -1314,44 +1563,59 @@ app.put(
       if (isActive !== undefined) product.isActive = !!isActive;
 
       // Handle images update
-      let updatedImages = [];
+      let updatedImages = [...product.images];
 
+      // Parse images from request body
+      let imagesArray = [];
       try {
-        // Parse images from request body
-        let imagesArray = images;
-        if (typeof imagesArray === "string") {
-          try {
-            imagesArray = JSON.parse(imagesArray);
-          } catch (e) {
-            // If not JSON, treat as single image
-            imagesArray = [imagesArray];
+        if (images && images.trim() !== "" && images !== "[]") {
+          if (typeof images === "string") {
+            if (images.trim().startsWith("[")) {
+              imagesArray = JSON.parse(images);
+            } else {
+              imagesArray = [images];
+            }
+          } else if (Array.isArray(images)) {
+            imagesArray = images;
           }
-        }
-
-        // Process images (convert base64 to files, extract filenames)
-        if (Array.isArray(imagesArray)) {
-          updatedImages = processImagesArray(imagesArray, "product");
-          console.log("📸 Processed images:", updatedImages);
         }
       } catch (e) {
         console.error("❌ Error parsing images:", e);
-        // If parsing fails, use current images
-        updatedImages = [...product.images];
+        imagesArray = [];
+      }
+
+      // Process images (convert base64 to files, extract filenames)
+      if (Array.isArray(imagesArray) && imagesArray.length > 0) {
+        const processed = processImagesArray(imagesArray, "product");
+        updatedImages = [...processed];
+        console.log("📸 Processed images:", processed);
       }
 
       // Remove specified images
       try {
-        const imagesToRemove = JSON.parse(removeImages);
-        if (Array.isArray(imagesToRemove)) {
-          imagesToRemove.forEach((imageToRemove) => {
-            const filename = extractFilename(imageToRemove);
-            // Remove from array
-            updatedImages = updatedImages.filter((img) => img !== filename);
-            // Delete from server
-            if (filename) {
-              deleteImageFile(filename);
+        let imagesToRemove = [];
+        if (removeImages && removeImages.trim() !== "" && removeImages !== "[]") {
+          if (typeof removeImages === "string") {
+            if (removeImages.trim().startsWith("[")) {
+              imagesToRemove = JSON.parse(removeImages);
+            } else {
+              imagesToRemove = [removeImages];
             }
-          });
+          } else if (Array.isArray(removeImages)) {
+            imagesToRemove = removeImages;
+          }
+          
+          if (Array.isArray(imagesToRemove)) {
+            imagesToRemove.forEach((imageToRemove) => {
+              const filename = extractFilename(imageToRemove);
+              if (filename) {
+                // Remove from array
+                updatedImages = updatedImages.filter((img) => img !== filename);
+                // Delete from server
+                deleteImageFile(filename);
+              }
+            });
+          }
         }
       } catch (e) {
         console.error("❌ Error parsing removeImages:", e);
@@ -1376,8 +1640,15 @@ app.put(
       await product.save();
 
       console.log("✅ Product updated successfully");
+      console.log("📊 Updated categories:", product.categories);
 
-      // Process product for response
+      // Update product counts for all affected categories
+      const allAffectedCategories = [...new Set([...oldCategories, ...product.categories])];
+      
+      for (const catId of allAffectedCategories) {
+        await updateCategoryProductCount(catId);
+      }
+
       const processedProduct = processProductForResponse(product);
 
       res.json({
@@ -1397,7 +1668,6 @@ app.put(
   }
 );
 
-// DELETE /api/admin/products/:id - Delete product from MongoDB
 app.delete("/api/admin/products/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -1417,10 +1687,10 @@ app.delete("/api/admin/products/:id", async (req, res) => {
       });
     }
 
-    // Delete associated image files from server
+    const categories = [...(product.categories || [])];
+
     if (product.images && Array.isArray(product.images)) {
       product.images.forEach((image) => {
-        // Extract filename and delete
         const filename = extractFilename(image);
         if (filename) {
           deleteImageFile(filename);
@@ -1428,10 +1698,14 @@ app.delete("/api/admin/products/:id", async (req, res) => {
       });
     }
 
-    // Soft delete from database
     product.isActive = false;
     product.updatedAt = Date.now();
     await product.save();
+
+    // Update product counts for all categories this product was in
+    for (const categoryId of categories) {
+      await updateCategoryProductCount(categoryId);
+    }
 
     res.json({
       success: true,
@@ -1448,10 +1722,214 @@ app.delete("/api/admin/products/:id", async (req, res) => {
 });
 
 // ============================================
+// 🔗 PRODUCT-CATEGORY LINKING ROUTES (NEW)
+// ============================================
+
+// POST /api/admin/products/:productId/link-category/:categoryId
+app.post("/api/admin/products/:productId/link-category/:categoryId", async (req, res) => {
+  try {
+    const { productId, categoryId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(productId) || !mongoose.Types.ObjectId.isValid(categoryId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product or category ID format",
+      });
+    }
+
+    const product = await Product.findById(productId);
+    const category = await Category.findById(categoryId);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: "Category not found",
+      });
+    }
+
+    // Add category to product's categories array if not already present
+    if (!product.categories.includes(categoryId)) {
+      product.categories.push(categoryId);
+      await product.save();
+      
+      // Update product count for the category
+      await updateCategoryProductCount(categoryId);
+    }
+
+    const processedProduct = processProductForResponse(product);
+
+    res.json({
+      success: true,
+      message: "Product linked to category successfully",
+      product: processedProduct,
+    });
+  } catch (error) {
+    console.error("❌ Link product to category error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error linking product to category",
+      error: error.message,
+    });
+  }
+});
+
+// DELETE /api/admin/products/:productId/unlink-category/:categoryId
+app.delete("/api/admin/products/:productId/unlink-category/:categoryId", async (req, res) => {
+  try {
+    const { productId, categoryId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(productId) || !mongoose.Types.ObjectId.isValid(categoryId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid product or category ID format",
+      });
+    }
+
+    const product = await Product.findById(productId);
+    const category = await Category.findById(categoryId);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: "Category not found",
+      });
+    }
+
+    // Remove category from product's categories array
+    const index = product.categories.indexOf(categoryId);
+    if (index > -1) {
+      product.categories.splice(index, 1);
+      await product.save();
+      
+      // Update product count for the category
+      await updateCategoryProductCount(categoryId);
+    }
+
+    const processedProduct = processProductForResponse(product);
+
+    res.json({
+      success: true,
+      message: "Product unlinked from category successfully",
+      product: processedProduct,
+    });
+  } catch (error) {
+    console.error("❌ Unlink product from category error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error unlinking product from category",
+      error: error.message,
+    });
+  }
+});
+
+// POST /api/admin/categories/:categoryId/link-products (Bulk link products)
+app.post("/api/admin/categories/:categoryId/link-products", async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { productIds } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid category ID format",
+      });
+    }
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No product IDs provided",
+      });
+    }
+
+    const category = await Category.findById(categoryId);
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: "Category not found",
+      });
+    }
+
+    const results = [];
+    let linkedCount = 0;
+    let alreadyLinkedCount = 0;
+    let errorCount = 0;
+
+    for (const productId of productIds) {
+      try {
+        if (!mongoose.Types.ObjectId.isValid(productId)) {
+          results.push({ productId, success: false, error: "Invalid product ID format" });
+          errorCount++;
+          continue;
+        }
+
+        const product = await Product.findById(productId);
+        if (!product) {
+          results.push({ productId, success: false, error: "Product not found" });
+          errorCount++;
+          continue;
+        }
+
+        if (product.categories.includes(categoryId)) {
+          results.push({ productId, success: true, message: "Already linked" });
+          alreadyLinkedCount++;
+          continue;
+        }
+
+        product.categories.push(categoryId);
+        await product.save();
+        
+        results.push({ productId, success: true, message: "Linked successfully" });
+        linkedCount++;
+      } catch (error) {
+        console.error(`❌ Error linking product ${productId}:`, error);
+        results.push({ productId, success: false, error: error.message });
+        errorCount++;
+      }
+    }
+
+    // Update product count for the category
+    await updateCategoryProductCount(categoryId);
+
+    res.json({
+      success: true,
+      message: `Bulk linking completed: ${linkedCount} linked, ${alreadyLinkedCount} already linked, ${errorCount} errors`,
+      results: results,
+      summary: {
+        total: productIds.length,
+        linked: linkedCount,
+        alreadyLinked: alreadyLinkedCount,
+        errors: errorCount
+      }
+    });
+  } catch (error) {
+    console.error("❌ Bulk link products to category error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error bulk linking products to category",
+      error: error.message,
+    });
+  }
+});
+
+// ============================================
 // 📥 OTHER ROUTES
 // ============================================
 
-// 🩺 HEALTH CHECK
 app.get("/health", (req, res) => {
   const dbStatus =
     mongoose.connection.readyState === 1 ? "connected" : "disconnected";
@@ -1460,6 +1938,11 @@ app.get("/health", (req, res) => {
     database: dbStatus,
     uptime: process.uptime(),
     uploadsPath: uploadsDir,
+    directories: {
+      uploads: fs.existsSync(uploadsDir) ? fs.readdirSync(uploadsDir) : [],
+      products: fs.existsSync(productUploadsDir) ? fs.readdirSync(productUploadsDir) : [],
+      categories: fs.existsSync(categoryUploadsDir) ? fs.readdirSync(categoryUploadsDir) : []
+    }
   });
 });
 
@@ -1481,6 +1964,15 @@ app.use((err, req, res, next) => {
       message: err.message,
     });
   }
+  
+  // Handle JSON parsing errors
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid JSON in request body",
+    });
+  }
+  
   next(err);
 });
 
@@ -1526,9 +2018,18 @@ const server = app.listen(PORT, () => {
     }`
   );
   console.log(`═══════════════════════════════════════════\n`);
+  
+  setTimeout(() => {
+    updateAllCategoryProductCounts().then(result => {
+      if (result.success) {
+        console.log(`📊 Category product counts initialized: ${result.updated}/${result.totalCategories} categories updated`);
+      } else {
+        console.log(`⚠️ Failed to initialize category product counts: ${result.message}`);
+      }
+    });
+  }, 3000);
 });
 
-// Handle server errors
 server.on("error", (error) => {
   if (error.code === "EADDRINUSE") {
     console.error(`❌ Port ${PORT} is already in use`);
