@@ -90,48 +90,38 @@ const uploadCategoryImage = multer({
 // 🛡️ MIDDLEWARE
 // ============================================
 
-// Fix JSON parsing errors - add this BEFORE express.json()
-app.use((req, res, next) => {
-  if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
-    let data = '';
-    req.on('data', chunk => {
-      data += chunk;
-    });
-    req.on('end', () => {
-      if (data.trim() === '') {
-        req.body = {};
-        next();
-      } else {
-        try {
-          req.body = JSON.parse(data);
-          next();
-        } catch (err) {
-          console.error('❌ JSON Parse Error:', err.message);
-          res.status(400).json({
-            success: false,
-            message: "Invalid JSON in request body"
-          });
-        }
-      }
-    });
-  } else {
-    next();
-  }
-});
-
+// CORS middleware should come first
 app.use(
   cors({
     origin: [
       "http://localhost:5173",
       "http://localhost:3000",
-      "https://federalpartsphilippines.vercel.app",
+      "https://federalpartsphilippines.com",
       "https://federalpartsphilippines-frontend.vercel.app",
     ],
     credentials: true,
   })
 );
 
-app.use(express.json({ limit: "50mb" }));
+// Custom middleware to handle JSON parsing errors
+app.use((req, res, next) => {
+  express.json({ 
+    limit: "50mb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString();
+    }
+  })(req, res, (err) => {
+    if (err) {
+      console.error('❌ JSON parsing error:', err.message);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid JSON in request body"
+      });
+    }
+    next();
+  });
+});
+
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Serve static files from uploads directory
@@ -325,16 +315,16 @@ const processProductForResponse = (product) => {
 };
 
 // ============================================
-// 🔗 CATEGORY-PRODUCT COUNT UTILITY FUNCTIONS (UPDATED FOR MULTIPLE CATEGORIES)
+// 🔗 CATEGORY-PRODUCT COUNT UTILITY FUNCTIONS
 // ============================================
 
 const updateCategoryProductCount = async (categoryId) => {
   try {
     if (!categoryId || !mongoose.Types.ObjectId.isValid(categoryId)) return;
 
-    // UPDATED: Now checking if product.categories array includes the categoryId
+    // Convert categoryId to string for query since categories array stores strings
     const productCount = await Product.countDocuments({
-      categories: categoryId,
+      categories: categoryId.toString(),
       isActive: true,
     });
 
@@ -365,9 +355,9 @@ const updateAllCategoryProductCounts = async () => {
     let updatedCount = 0;
 
     for (const category of categories) {
-      // UPDATED: Check products.categories array instead of product.category
+      // Convert category._id to string for query
       const productCount = await Product.countDocuments({
-        categories: category._id,
+        categories: category._id.toString(),
         isActive: true,
       });
 
@@ -610,7 +600,7 @@ app.post("/api/upload/base64", async (req, res) => {
 });
 
 // ============================================
-// 📁 CATEGORY ROUTES
+// 📁 CATEGORY ROUTES (FIXED - parentCategory handling)
 // ============================================
 
 app.get("/api/categories", async (req, res) => {
@@ -661,9 +651,9 @@ app.get("/api/categories", async (req, res) => {
         }
 
         if (categoryObj.productCount === undefined || categoryObj.productCount === null) {
-          // UPDATED: Check products.categories array instead of product.category
+          // Convert to string for query
           const productCount = await Product.countDocuments({
-            categories: categoryObj._id,
+            categories: categoryObj._id.toString(),
             isActive: true,
           });
           categoryObj.productCount = productCount;
@@ -672,9 +662,9 @@ app.get("/api/categories", async (req, res) => {
         if (includeTree === "true" && categoryObj.children && categoryObj.children.length > 0) {
           let totalProductCount = categoryObj.productCount || 0;
           for (const child of categoryObj.children) {
-            // UPDATED: Check products.categories array instead of product.category
+            // Convert to string for query
             const childProductCount = await Product.countDocuments({
-              categories: child._id,
+              categories: child._id.toString(),
               isActive: true,
             });
             child.productCount = childProductCount;
@@ -729,15 +719,15 @@ app.get("/api/categories/:id", async (req, res) => {
       categoryObj.image = getImageUrl(categoryObj.image, "category");
     }
 
-    // UPDATED: Check products.categories array instead of product.category
+    // Convert to string for query
     const productCount = await Product.countDocuments({
-      categories: id,
+      categories: id.toString(),
       isActive: true,
     });
     categoryObj.productCount = productCount;
 
     const recentProducts = await Product.find({
-      categories: id,
+      categories: id.toString(),
       isActive: true,
     })
       .limit(5)
@@ -773,6 +763,7 @@ app.get("/api/categories/:id", async (req, res) => {
   }
 });
 
+// FIXED: Properly handle parentCategory field
 app.post(
   "/api/categories",
   uploadCategoryImage.single("image"),
@@ -788,6 +779,12 @@ app.post(
         seoDescription,
         seoKeywords,
       } = req.body;
+
+      console.log("📥 Creating category with data:", {
+        name,
+        parentCategory,
+        parentCategoryType: typeof parentCategory,
+      });
 
       if (!name || !name.trim()) {
         return res.status(400).json({
@@ -809,10 +806,44 @@ app.post(
         imageFilename = req.file.filename;
       }
 
+      // FIXED: Properly handle parentCategory value
+      let validParentCategory = null;
+      
+      // Check if parentCategory is provided and valid
+      if (parentCategory && parentCategory.trim() !== "") {
+        // Handle different formats
+        if (mongoose.Types.ObjectId.isValid(parentCategory)) {
+          // It's already a valid ObjectId string
+          validParentCategory = parentCategory;
+        } else if (parentCategory === "null" || parentCategory === "undefined") {
+          validParentCategory = null;
+        } else if (typeof parentCategory === "string" && parentCategory.includes("_id")) {
+          // Try to extract ObjectId from stringified object
+          try {
+            // Remove any quotes and parse
+            const cleanParentCategory = parentCategory.replace(/"/g, '');
+            const match = cleanParentCategory.match(/[0-9a-fA-F]{24}/);
+            if (match && mongoose.Types.ObjectId.isValid(match[0])) {
+              validParentCategory = match[0];
+            }
+          } catch (e) {
+            console.warn("Could not extract ObjectId from parentCategory string:", parentCategory);
+          }
+        } else if (parentCategory === "[object Object]") {
+          console.warn("⚠️ Received [object Object] as parentCategory, setting to null");
+          validParentCategory = null;
+        } else {
+          console.warn("⚠️ Invalid parentCategory format:", parentCategory);
+          validParentCategory = null;
+        }
+      }
+
+      console.log("📊 Setting parentCategory to:", validParentCategory);
+
       const category = new Category({
         name: name.trim(),
         description: description ? description.trim() : "",
-        parentCategory: parentCategory || null,
+        parentCategory: validParentCategory,
         isActive: isActive,
         order: order || 0,
         seoTitle: seoTitle ? seoTitle.trim() : "",
@@ -845,6 +876,7 @@ app.post(
   }
 );
 
+// FIXED: Properly handle parentCategory in update
 app.put(
   "/api/categories/:id",
   uploadCategoryImage.single("image"),
@@ -878,6 +910,12 @@ app.put(
         seoKeywords,
       } = req.body;
 
+      console.log("📥 Updating category with data:", {
+        name,
+        parentCategory,
+        parentCategoryType: typeof parentCategory,
+      });
+
       if (name !== undefined) {
         if (!name.trim()) {
           return res.status(400).json({
@@ -901,8 +939,41 @@ app.put(
 
       if (description !== undefined)
         category.description = description ? description.trim() : "";
-      if (parentCategory !== undefined)
-        category.parentCategory = parentCategory || null;
+      
+      // FIXED: Properly handle parentCategory in update
+      if (parentCategory !== undefined) {
+        let validParentCategory = null;
+        
+        if (parentCategory && parentCategory.trim() !== "") {
+          // Handle different formats
+          if (mongoose.Types.ObjectId.isValid(parentCategory)) {
+            validParentCategory = parentCategory;
+          } else if (parentCategory === "null" || parentCategory === "undefined") {
+            validParentCategory = null;
+          } else if (typeof parentCategory === "string" && parentCategory.includes("_id")) {
+            // Try to extract ObjectId from stringified object
+            try {
+              const cleanParentCategory = parentCategory.replace(/"/g, '');
+              const match = cleanParentCategory.match(/[0-9a-fA-F]{24}/);
+              if (match && mongoose.Types.ObjectId.isValid(match[0])) {
+                validParentCategory = match[0];
+              }
+            } catch (e) {
+              console.warn("Could not extract ObjectId from parentCategory string:", parentCategory);
+            }
+          } else if (parentCategory === "[object Object]") {
+            console.warn("⚠️ Received [object Object] as parentCategory, setting to null");
+            validParentCategory = null;
+          } else {
+            console.warn("⚠️ Invalid parentCategory format:", parentCategory);
+            validParentCategory = null;
+          }
+        }
+        
+        category.parentCategory = validParentCategory;
+        console.log("📊 Setting parentCategory to:", validParentCategory);
+      }
+      
       if (isActive !== undefined) category.isActive = isActive;
       if (order !== undefined) category.order = order;
       if (seoTitle !== undefined)
@@ -948,6 +1019,7 @@ app.put(
       });
     } catch (error) {
       console.error("❌ Update category error:", error);
+      console.error("❌ Error details:", error);
       res.status(400).json({
         success: false,
         message: "Error updating category",
@@ -965,7 +1037,7 @@ app.delete("/api/categories/:id", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Invalid category ID format",
-        });
+      });
     }
 
     const category = await Category.findById(id);
@@ -985,9 +1057,9 @@ app.delete("/api/categories/:id", async (req, res) => {
       });
     }
 
-    // UPDATED: Check products.categories array instead of product.category
+    // Convert to string for query
     const productCount = await Product.countDocuments({
-      categories: id,
+      categories: id.toString(),
       isActive: true,
     });
     if (productCount > 0) {
@@ -1053,7 +1125,7 @@ app.post("/api/admin/categories/update-counts", async (req, res) => {
 });
 
 // ============================================
-// 📦 PRODUCT ROUTES (UPDATED FOR MULTIPLE CATEGORIES)
+// 📦 PRODUCT ROUTES
 // ============================================
 
 app.get("/api/products", async (req, res) => {
@@ -1078,7 +1150,6 @@ app.get("/api/products", async (req, res) => {
     const filter = { isActive: true };
 
     if (category && category !== "all" && category !== "null") {
-      // UPDATED: Now checking if product.categories array includes the category ID
       filter.categories = category;
     }
 
@@ -1196,7 +1267,7 @@ app.get("/api/products/:id", async (req, res) => {
 });
 
 // ============================================
-// 🔧 ADMIN ROUTES (UPDATED FOR MULTIPLE CATEGORIES)
+// 🔧 ADMIN ROUTES
 // ============================================
 
 app.get("/api/admin/products", async (req, res) => {
@@ -1216,7 +1287,6 @@ app.get("/api/admin/products", async (req, res) => {
     }
 
     if (category && category !== "all" && category !== "null") {
-      // UPDATED: Now checking if product.categories array includes the category ID
       filter.categories = category;
     }
 
@@ -1264,7 +1334,7 @@ app.post(
         description,
         price,
         category,
-        categories = "[]", // NEW: Accept multiple categories
+        categories = "[]",
         stock = 0,
         brand,
         sku,
@@ -1339,7 +1409,7 @@ app.post(
               .substr(2, 6)
               .toUpperCase()}`;
 
-      // Process categories - accept both single category and multiple categories
+      // Process categories
       let productCategories = [];
       
       // Parse categories array
@@ -1367,9 +1437,12 @@ app.post(
         }
       }
 
-      // Remove duplicates and empty values
+      // Remove duplicates and empty values, ensure they are strings
       productCategories = [
-        ...new Set(productCategories.filter((cat) => cat && cat.trim() !== "")),
+        ...new Set(productCategories
+          .filter((cat) => cat && cat.toString().trim() !== "")
+          .map(cat => cat.toString()) // Ensure all are strings
+        ),
       ];
 
       const product = new Product({
@@ -1377,7 +1450,7 @@ app.post(
         description: description.trim(),
         price: priceNum,
         categories: productCategories,
-        category: productCategories.length > 0 ? productCategories[0] : null, // For backward compatibility
+        category: productCategories.length > 0 ? productCategories[0] : null,
         images: imageFilenames,
         stock: parseInt(stock) || 0,
         brand: brand ? brand.trim() : "",
@@ -1510,9 +1583,12 @@ app.put(
           }
         }
         
-        // Remove duplicates and empty values
+        // Remove duplicates and empty values, ensure they are strings
         product.categories = [
-          ...new Set(newCategories.filter((cat) => cat && cat.trim() !== "")),
+          ...new Set(newCategories
+            .filter((cat) => cat && cat.toString().trim() !== "")
+            .map(cat => cat.toString()) // Ensure all are strings
+          ),
         ];
         
         // Update single category for backward compatibility
@@ -1524,10 +1600,11 @@ app.put(
       } else if (category !== undefined) {
         // For backward compatibility - single category update
         if (category && category !== "null" && category.trim() !== "") {
-          if (!product.categories.includes(category)) {
-            product.categories.push(category);
+          const categoryStr = category.toString();
+          if (!product.categories.includes(categoryStr)) {
+            product.categories.push(categoryStr);
           }
-          product.category = category;
+          product.category = categoryStr;
         } else {
           product.category = null;
         }
@@ -1722,7 +1799,7 @@ app.delete("/api/admin/products/:id", async (req, res) => {
 });
 
 // ============================================
-// 🔗 PRODUCT-CATEGORY LINKING ROUTES (NEW)
+// 🔗 PRODUCT-CATEGORY LINKING ROUTES
 // ============================================
 
 // POST /api/admin/products/:productId/link-category/:categoryId
@@ -1755,8 +1832,9 @@ app.post("/api/admin/products/:productId/link-category/:categoryId", async (req,
     }
 
     // Add category to product's categories array if not already present
-    if (!product.categories.includes(categoryId)) {
-      product.categories.push(categoryId);
+    const categoryIdStr = categoryId.toString();
+    if (!product.categories.includes(categoryIdStr)) {
+      product.categories.push(categoryIdStr);
       await product.save();
       
       // Update product count for the category
@@ -1810,7 +1888,8 @@ app.delete("/api/admin/products/:productId/unlink-category/:categoryId", async (
     }
 
     // Remove category from product's categories array
-    const index = product.categories.indexOf(categoryId);
+    const categoryIdStr = categoryId.toString();
+    const index = product.categories.indexOf(categoryIdStr);
     if (index > -1) {
       product.categories.splice(index, 1);
       await product.save();
@@ -1864,6 +1943,7 @@ app.post("/api/admin/categories/:categoryId/link-products", async (req, res) => 
       });
     }
 
+    const categoryIdStr = categoryId.toString();
     const results = [];
     let linkedCount = 0;
     let alreadyLinkedCount = 0;
@@ -1884,13 +1964,13 @@ app.post("/api/admin/categories/:categoryId/link-products", async (req, res) => 
           continue;
         }
 
-        if (product.categories.includes(categoryId)) {
+        if (product.categories.includes(categoryIdStr)) {
           results.push({ productId, success: true, message: "Already linked" });
           alreadyLinkedCount++;
           continue;
         }
 
-        product.categories.push(categoryId);
+        product.categories.push(categoryIdStr);
         await product.save();
         
         results.push({ productId, success: true, message: "Linked successfully" });
@@ -1967,9 +2047,10 @@ app.use((err, req, res, next) => {
   
   // Handle JSON parsing errors
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    console.error('❌ JSON parsing error:', err.message);
     return res.status(400).json({
       success: false,
-      message: "Invalid JSON in request body",
+      message: "Invalid JSON in request body"
     });
   }
   
