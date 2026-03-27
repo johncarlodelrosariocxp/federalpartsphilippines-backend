@@ -24,14 +24,38 @@ const app = express();
 
 app.use(compression());
 
-// Parse allowed origins from env
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:3000").split(",");
+// Parse allowed origins from env with additional frontend URLs
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://federalpartsphilippines-frontend.com",
+  "https://federalpartsphilippines-frontend.vercel.app",
+  "https://federalpartsphilippines-main.vercel.app",
+  "https://federalpartsphilippines.com",
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : [])
+];
+
+// Remove duplicates
+const uniqueAllowedOrigins = [...new Set(allowedOrigins)];
 
 // CORS configuration
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      
+      if (uniqueAllowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        console.warn(`⚠️ CORS blocked request from: ${origin}`);
+        callback(null, true); // Still allow but log warning
+        // callback(new Error('Not allowed by CORS')); // Uncomment to strictly block
+      }
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   })
 );
 
@@ -46,6 +70,9 @@ app.use(
     maxAge: "7d",
     etag: true,
     lastModified: true,
+    setHeaders: (res, path) => {
+      res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    }
   })
 );
 
@@ -124,6 +151,7 @@ app.get("/health", (req, res) => {
     database: dbStatus,
     uptime: process.uptime(),
     environment: process.env.NODE_ENV,
+    allowedOrigins: uniqueAllowedOrigins,
   });
 });
 
@@ -173,6 +201,10 @@ const server = app.listen(PORT, () => {
   console.log(`🔗 Admin API: http://localhost:${PORT}/api/admin`);
   console.log(`📁 Uploads: http://localhost:${PORT}/uploads`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
+  console.log(`🔒 CORS Allowed Origins:`);
+  uniqueAllowedOrigins.forEach(origin => {
+    console.log(`   - ${origin}`);
+  });
   console.log(`═══════════════════════════════════════════\n`);
 });
 
