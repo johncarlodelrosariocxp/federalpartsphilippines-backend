@@ -1,208 +1,247 @@
-// Import User model (database template) and JWT for making tokens
+// backend/controllers/userController.js
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 
-// ==============================================
-// 1. REGISTER FUNCTION - Create new account
-// ==============================================
+// Admin registration code from env
+const ADMIN_REGISTRATION_SECRET = process.env.ADMIN_REGISTRATION_SECRET || "FEDERAL_PARTS_ADMIN_2024_SECRET_KEY";
+
+// Register new user
 exports.register = async (req, res) => {
   try {
-    // Step 1: Get info from sign-up form
-    const { name, email, password } = req.body;
+    const { name, email, password, phone, adminCode } = req.body;
 
-    // Step 2: Check if email is already taken
+    // Validate required fields
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Name, email, and password are required"
+      });
+    }
+
+    // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
         success: false,
-        message: "❌ Email already registered! Try another email.",
+        message: "Email already registered"
       });
     }
 
-    // Step 3: Create new user account
-    const user = new User({ name, email, password });
-    await user.save(); // Save to database
-
-    // Step 4: Create login ticket (lasts 24 hours)
-    const token = jwt.sign(
-      {
-        userId: user._id, // User's ID number
-        email: user.email, // User's email
-        role: user.role, // User or admin
-        name: user.name, // User's name
-      },
-      process.env.JWT_SECRET, // Secret key to sign ticket
-      { expiresIn: "24h" } // Ticket expires in 24 hours
-    );
-
-    // Step 5: Send success response
-    res.status(201).json({
-      success: true,
-      message: "✅ Account created successfully!",
-      token, // Give them the login ticket
-      user: {
-        id: user._id, // User ID
-        name: user.name, // User's name
-        email: user.email, // User's email
-        role: user.role, // User's role
-      },
-    });
-  } catch (error) {
-    console.error("Registration error:", error);
-    res.status(500).json({
-      success: false,
-      message: "⚠️ Server error! Please try again later.",
-      error: error.message,
-    });
-  }
-};
-
-// ==============================================
-// 2. LOGIN FUNCTION - Sign in to account
-// ==============================================
-exports.login = async (req, res) => {
-  try {
-    // Step 1: Get login info
-    const { email, password } = req.body;
-
-    // Step 2: Find user by email
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({
+    // Check if this is the first user (no users in database)
+    const userCount = await User.countDocuments();
+    const isFirstUser = userCount === 0;
+    
+    // Determine user role
+    let userRole = "user";
+    
+    // Check if admin code is provided and correct
+    if (adminCode && adminCode === ADMIN_REGISTRATION_SECRET) {
+      userRole = "admin";
+    } else if (adminCode && adminCode !== "") {
+      return res.status(400).json({
         success: false,
-        message: "❌ Wrong email or password!",
+        message: "Invalid admin code"
       });
     }
-
-    // Step 3: Check password (using model's comparePassword)
-    const isPasswordValid = await user.comparePassword(password);
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: "❌ Wrong email or password!",
-      });
+    
+    // First user becomes admin automatically if no admin code provided
+    if (isFirstUser && !adminCode) {
+      userRole = "admin";
     }
 
-    // Step 4: Create new login ticket
+    // Create user
+    const user = new User({
+      name,
+      email,
+      password,
+      phone: phone || "",
+      role: userRole
+    });
+
+    await user.save();
+
+    // Generate token
     const token = jwt.sign(
       {
         userId: user._id,
         email: user.email,
         role: user.role,
-        name: user.name,
+        name: user.name
       },
       process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
 
-    // Step 5: Send success
-    res.json({
+    let message = "Registration successful";
+    if (userRole === "admin") {
+      message = "✅ Admin account created successfully!";
+    } else if (isFirstUser) {
+      message = "✅ First user account created! You have been granted admin privileges.";
+    }
+
+    res.status(201).json({
       success: true,
-      message: "✅ Login successful!",
-      token, // New login ticket
+      message,
+      token,
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
         role: user.role,
+        phone: user.phone
+      }
+    });
+  } catch (error) {
+    console.error("Registration error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error registering user",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
+    });
+  }
+};
+
+// Login user
+exports.login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validate required fields
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required"
+      });
+    }
+
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password"
+      });
+    }
+
+    // Check password
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password"
+      });
+    }
+
+    // Generate token
+    const token = jwt.sign(
+      {
+        userId: user._id,
+        email: user.email,
+        role: user.role,
+        name: user.name
       },
+      process.env.JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+
+    res.json({
+      success: true,
+      message: "Login successful",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        phone: user.phone
+      }
     });
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({
       success: false,
-      message: "⚠️ Server error! Please try again.",
-      error: error.message,
+      message: "Error logging in",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
 
-// ==============================================
-// 3. GET PROFILE - View your account info
-// ==============================================
+// Get user profile
 exports.getProfile = async (req, res) => {
   try {
-    // Step 1: Find user by ID (from token)
     const user = await User.findById(req.user.userId).select("-password");
-    // .select("-password") means "don't include password"
-
+    
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "❓ User not found!",
+        message: "User not found"
       });
     }
 
-    // Step 2: Send user info (without password)
     res.json({
       success: true,
-      user,
+      user
     });
   } catch (error) {
+    console.error("Get profile error:", error);
     res.status(500).json({
       success: false,
-      message: "⚠️ Server error!",
+      message: "Error fetching profile",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
 
-// ==============================================
-// 4. UPDATE PROFILE - Change your info
-// ==============================================
+// Update user profile
 exports.updateProfile = async (req, res) => {
   try {
-    // Step 1: Get new info from request
-    const updates = req.body;
+    const { name, phone, address } = req.body;
+    
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
 
-    // Step 2: Protect important fields (can't change these)
-    delete updates.password; // Can't change password here
-    delete updates.email; // Can't change email
-    delete updates.role; // Can't change role
+    if (name) user.name = name;
+    if (phone) user.phone = phone;
+    if (address) user.address = address;
 
-    // Step 3: Update user in database
-    const user = await User.findByIdAndUpdate(
-      req.user.userId, // Which user to update
-      updates, // New info
-      {
-        new: true, // Return updated user
-        runValidators: true, // Check if new info is valid
-      }
-    ).select("-password"); // Don't include password
+    await user.save();
 
-    // Step 4: Send success
     res.json({
       success: true,
-      message: "✅ Profile updated!",
-      user, // Updated user info
+      message: "Profile updated successfully",
+      user: user.toObject({ getters: true, virtuals: false })
     });
   } catch (error) {
+    console.error("Update profile error:", error);
     res.status(500).json({
       success: false,
-      message: "⚠️ Server error!",
+      message: "Error updating profile",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
 
-// ==============================================
-// 5. GET ALL USERS - Admin only (see all accounts)
-// ==============================================
+// Get all users (admin only)
 exports.getAllUsers = async (req, res) => {
   try {
-    // Step 1: Get ALL users from database
-    const users = await User.find().select("-password");
-    // .select("-password") = don't include passwords
-
-    // Step 2: Send user list
+    const users = await User.find().select("-password").sort({ createdAt: -1 });
+    
     res.json({
       success: true,
-      count: users.length, // How many users total
-      users, // List of all users
+      count: users.length,
+      users
     });
   } catch (error) {
+    console.error("Get all users error:", error);
     res.status(500).json({
       success: false,
-      message: "⚠️ Server error!",
-      error: error.message,
+      message: "Error fetching users",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };

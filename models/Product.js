@@ -49,14 +49,12 @@ const productSchema = new mongoose.Schema(
       min: 0,
       default: null,
     },
-    // UPDATED: Changed from single category to array of categories
     categories: [
       {
-        type: String, // Category IDs as strings
+        type: String,
         default: [],
       },
     ],
-    // Keep the old category field for backward compatibility
     category: {
       type: String,
       required: false,
@@ -118,35 +116,23 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
-    updatedAt: {
-      type: Date,
-      default: Date.now,
-    },
   },
   {
     timestamps: true,
   }
 );
 
-// Update updatedAt on save
 productSchema.pre("save", function (next) {
   this.updatedAt = Date.now();
   
-  // Ensure categories is an array
   if (!Array.isArray(this.categories)) {
     this.categories = [];
   }
   
-  // Remove duplicates from categories array
   if (Array.isArray(this.categories)) {
     this.categories = [...new Set(this.categories.filter(cat => cat && cat.trim() !== ""))];
   }
   
-  // For backward compatibility, set category to the first category if not already set
   if (this.categories.length > 0 && (!this.category || this.category === "")) {
     this.category = this.categories[0];
   }
@@ -154,7 +140,6 @@ productSchema.pre("save", function (next) {
   next();
 });
 
-// Generate SKU if not provided
 productSchema.pre("save", function (next) {
   if (!this.sku) {
     this.sku = `SKU-${Date.now()}-${Math.random()
@@ -165,33 +150,20 @@ productSchema.pre("save", function (next) {
   next();
 });
 
-// Custom setter for category to handle empty strings
-productSchema.path("category").set(function (value) {
-  // If value is empty string, return null
-  if (value === "" || value === null || value === undefined) {
-    return null;
-  }
-  return value;
-});
-
-// Method to add a category
 productSchema.methods.addCategory = function(categoryId) {
   if (!this.categories.includes(categoryId)) {
     this.categories.push(categoryId);
   }
-  // Update the main category if it's empty
   if (!this.category || this.category === "" || this.category === null) {
     this.category = categoryId;
   }
 };
 
-// Method to remove a category
 productSchema.methods.removeCategory = function(categoryId) {
   const index = this.categories.indexOf(categoryId);
   if (index > -1) {
     this.categories.splice(index, 1);
   }
-  // Update the main category if we removed it
   if (this.category === categoryId && this.categories.length > 0) {
     this.category = this.categories[0];
   } else if (this.category === categoryId && this.categories.length === 0) {
@@ -199,7 +171,6 @@ productSchema.methods.removeCategory = function(categoryId) {
   }
 };
 
-// Virtual for getting primary category (first in array or old category field)
 productSchema.virtual('primaryCategory').get(function() {
   if (this.categories && this.categories.length > 0) {
     return this.categories[0];
@@ -207,15 +178,12 @@ productSchema.virtual('primaryCategory').get(function() {
   return this.category;
 });
 
-// Indexes for better performance
 productSchema.index({ name: "text", description: "text", brand: "text" });
-productSchema.index({ categories: 1 }); // Index for array of categories
-productSchema.index({ category: 1 }); // Keep old index for backward compatibility
+productSchema.index({ categories: 1 });
+productSchema.index({ category: 1 });
 productSchema.index({ price: 1 });
 productSchema.index({ featured: 1 });
 productSchema.index({ isActive: 1 });
-productSchema.index({ isArchived: 1 });
-productSchema.index({ stock: 1 });
 
 const Product = mongoose.model("Product", productSchema);
 

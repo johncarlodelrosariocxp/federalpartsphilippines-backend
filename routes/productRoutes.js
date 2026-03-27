@@ -1,166 +1,58 @@
-// backend/models/Product.js
-const mongoose = require("mongoose");
+const express = require("express");
+const router = express.Router();
+const { auth, adminAuth } = require("../middleware/auth");
+const productController = require("../controllers/productController");
 
-const reviewSchema = new mongoose.Schema({
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-  },
-  rating: {
-    type: Number,
-    required: true,
-    min: 1,
-    max: 5,
-  },
-  comment: {
-    type: String,
-    required: true,
-  },
-  approved: {
-    type: Boolean,
-    default: false,
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-});
+// =================== PUBLIC ROUTES ===================
+router.get("/", productController.getAllProducts);
+router.get("/featured", productController.getFeaturedProducts);
+router.get("/search", productController.searchProducts);
+router.get("/category/:categoryId", productController.getProductsByCategory);
+router.get("/:id", productController.getProductById);
+router.get("/:id/related", productController.getRelatedProducts);
 
-const productSchema = new mongoose.Schema(
-  {
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 200,
-    },
-    description: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    price: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-    discountedPrice: {
-      type: Number,
-      min: 0,
-      default: null,
-    },
-    category: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Category",
-      required: false,
-      default: null, // ADD THIS LINE
-    },
-    images: [
-      {
-        type: String,
-        default: [],
-      },
-    ],
-    stock: {
-      type: Number,
-      required: true,
-      default: 0,
-      min: 0,
-    },
-    brand: {
-      type: String,
-      trim: true,
-      maxlength: 100,
-    },
-    sku: {
-      type: String,
-      unique: true,
-      trim: true,
-      sparse: true,
-      maxlength: 50,
-    },
-    weight: {
-      type: String,
-      trim: true,
-    },
-    dimensions: {
-      type: String,
-      trim: true,
-    },
-    specifications: {
-      type: Map,
-      of: String,
-      default: {},
-    },
-    reviews: [reviewSchema],
-    rating: {
-      type: Number,
-      default: 0,
-      min: 0,
-      max: 5,
-    },
-    featured: {
-      type: Boolean,
-      default: false,
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
-    isArchived: {
-      type: Boolean,
-      default: false,
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
-    updatedAt: {
-      type: Date,
-      default: Date.now,
-    },
-  },
-  {
-    timestamps: true,
-  }
-);
+// =================== PROTECTED ROUTES ===================
+router.post("/:id/reviews", auth, productController.addReview);
 
-// Update updatedAt on save
-productSchema.pre("save", function (next) {
-  this.updatedAt = Date.now();
-  next();
-});
+// =================== ADMIN ROUTES ===================
+// IMPORTANT: These routes need to be defined BEFORE the :id route
+// Create product
+router.post("/", auth, adminAuth, productController.createProduct);
 
-// Generate SKU if not provided
-productSchema.pre("save", function (next) {
-  if (!this.sku) {
-    this.sku = `SKU-${Date.now()}-${Math.random()
-      .toString(36)
-      .substr(2, 6)
-      .toUpperCase()}`;
-  }
-  next();
-});
+// Admin get all products (including inactive)
+router.get("/admin/all", auth, adminAuth, productController.getAllProductsForAdmin);
 
-// Custom setter for category to handle empty strings
-productSchema.path("category").set(function (value) {
-  // If value is empty string, return null
-  if (value === "" || value === null || value === undefined) {
-    return null;
-  }
-  return value;
-});
+// Update product
+router.put("/:id", auth, adminAuth, productController.updateProduct);
 
-// Indexes for better performance
-productSchema.index({ name: "text", description: "text", brand: "text" });
-productSchema.index({ category: 1 });
-productSchema.index({ price: 1 });
-productSchema.index({ featured: 1 });
-productSchema.index({ isActive: 1 });
-productSchema.index({ isArchived: 1 });
-productSchema.index({ stock: 1 });
+// Delete product
+router.delete("/:id", auth, adminAuth, productController.deleteProduct);
 
-const Product = mongoose.model("Product", productSchema);
+// Update stock
+router.patch("/:id/stock", auth, adminAuth, productController.updateStock);
 
-module.exports = Product;
+// Toggle featured
+router.patch("/:id/featured", auth, adminAuth, productController.toggleFeatured);
+
+// Toggle active
+router.patch("/:id/active", auth, adminAuth, productController.toggleActive);
+
+// Bulk operations
+router.post("/bulk/update", auth, adminAuth, productController.bulkUpdateProducts);
+router.post("/bulk/delete", auth, adminAuth, productController.bulkDeleteProducts);
+router.post("/bulk/status", auth, adminAuth, productController.bulkUpdateStatus);
+
+// Stats and reports
+router.get("/stats/overview", auth, adminAuth, productController.getProductStats);
+router.get("/low-stock/list", auth, adminAuth, productController.getLowStockProducts);
+router.get("/export/csv", auth, adminAuth, productController.exportProducts);
+
+// Image operations
+router.post("/:id/images", auth, adminAuth, productController.uploadProductImage);
+router.delete("/:id/images/:imageIndex", auth, adminAuth, productController.deleteProductImage);
+
+// Reviews
+router.get("/:id/reviews", auth, adminAuth, productController.getProductReviews);
+router.patch("/reviews/:reviewId", auth, adminAuth, productController.updateReviewStatus);
+
+module.exports = router;

@@ -1,31 +1,30 @@
-// models/User.js
+// backend/models/User.js
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs"); // For encrypting passwords
-const jwt = require("jsonwebtoken"); // For creating login tokens
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 
-// Define what a user looks like in our database
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true, // Must have a name
-    trim: true, // Remove extra spaces
+    required: true,
+    trim: true,
   },
   email: {
     type: String,
-    required: true, // Must have an email
-    unique: true, // No two users can have same email
-    lowercase: true, // Store all emails as lowercase
+    required: true,
+    unique: true,
+    lowercase: true,
     trim: true,
   },
   password: {
     type: String,
-    required: true, // Must have a password
-    minlength: 6, // At least 6 characters
+    required: true,
+    minlength: 6,
   },
   role: {
     type: String,
-    enum: ["user", "admin"], // Can only be "user" or "admin"
-    default: "user", // If not specified, it's a regular user
+    enum: ["user", "admin"],
+    default: "user",
   },
   address: {
     street: String,
@@ -37,60 +36,48 @@ const userSchema = new mongoose.Schema({
   phone: String,
   createdAt: {
     type: Date,
-    default: Date.now, // Auto-set to current date when created
+    default: Date.now,
   },
 });
 
-// Before saving user to database, encrypt their password
+// Hash password before saving
 userSchema.pre("save", async function (next) {
-  // Only hash password if it's new or changed
   if (!this.isModified("password")) return next();
 
   try {
-    const salt = await bcrypt.genSalt(10); // Create random salt
-    this.password = await bcrypt.hash(this.password, salt); // Encrypt password
-    next(); // Move to next step
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
   } catch (error) {
-    next(error); // Pass error to next step
+    next(error);
   }
 });
 
-// Method to check if entered password matches stored password
+// Compare password method
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Method to create login token (lasts 24 hours)
+// Generate auth token
 userSchema.methods.generateAuthToken = function () {
   const token = jwt.sign(
     {
-      userId: this._id, // User's ID from database
+      userId: this._id,
       email: this.email,
-      role: this.role, // User or admin
+      role: this.role,
       name: this.name,
     },
-    process.env.JWT_SECRET, // Secret key from environment
-    { expiresIn: "24h" } // Token expires in 24 hours
+    process.env.JWT_SECRET,
+    { expiresIn: "24h" }
   );
   return token;
 };
 
-// Method to create refresh token (lasts 7 days, for getting new login tokens)
-userSchema.methods.generateRefreshToken = function () {
-  const refreshToken = jwt.sign(
-    { userId: this._id }, // Only store user ID
-    process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
-    { expiresIn: "7d" } // Lasts 7 days
-  );
-  return refreshToken;
-};
-
-// When converting user to JSON, remove password for security
+// Remove password when converting to JSON
 userSchema.methods.toJSON = function () {
-  const user = this.toObject(); // Convert to plain object
-  delete user.password; // Don't include password in response
+  const user = this.toObject();
+  delete user.password;
   return user;
 };
 
-// Export the User model so we can use it elsewhere
 module.exports = mongoose.model("User", userSchema);
